@@ -1,0 +1,499 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  RoleArn:
+    Description: Existing IAM role ARN
+    Type: String
+    Default: arn:aws:iam::166633657396:role/LabRole
+
+Resources:
+  NotesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: NotesTable
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  NotesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub notes-attachments-bucket-${AWS::StackName}
+
+  CreateNoteFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.createNote
+      Role: !Ref RoleArn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const dynamo = new AWS.DynamoDB.DocumentClient();
+          const s3 = new AWS.S3();
+          const bucketName = process.env.LOGS_BUCKET;
+
+          const logOperation = async (operation, details) => {
+            const log = {
+              operation,
+              details,
+              timestamp: new Date().toISOString()
+            };
+
+            const params = {
+              Bucket: bucketName,
+              Key: `logs/${Date.now()}.json`,
+              Body: JSON.stringify(log),
+              ContentType: 'application/json'
+            };
+
+            await s3.putObject(params).promise();
+          };
+
+          exports.createNote = async (event) => {
+            try {
+              const body = JSON.parse(event.body);
+              const { text } = body;
+              const id = Date.now().toString();
+
+              const params = {
+                TableName: 'NotesTable',
+                Item: { id, text },
+              };
+
+              await dynamo.put(params).promise();
+              await logOperation('create', { id, text });
+
+              return {
+                statusCode: 200,
+                headers: {
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                  'Access-Control-Allow-Headers': 'Content-Type,Authorization'
+                },
+                body: JSON.stringify({ id, text }),
+              };
+            } catch (error) {
+              console.error(error);
+              return {
+                statusCode: 500,
+                headers: {
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                  'Access-Control-Allow-Headers': 'Content-Type,Authorization'
+                },
+                body: JSON.stringify({ error: 'Could not create note' }),
+              };
+            }
+          };
+      Runtime: nodejs16.x
+      Environment:
+        Variables:
+          LOGS_BUCKET: !Ref NotesBucket
+
+  GetNotesFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.getNotes
+      Role: !Ref RoleArn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const dynamo = new AWS.DynamoDB.DocumentClient();
+
+          exports.getNotes = async () => {
+            try {
+              const params = {
+                TableName: 'NotesTable',
+              };
+
+              const data = await dynamo.scan(params).promise();
+
+              return {
+                statusCode: 200,
+                headers: {
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                  'Access-Control-Allow-Headers': 'Content-Type,Authorization'
+                },
+                body: JSON.stringify(data.Items),
+              };
+            } catch (error) {
+              console.error(error);
+              return {
+                statusCode: 500,
+                headers: {
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                  'Access-Control-Allow-Headers': 'Content-Type,Authorization'
+                },
+                body: JSON.stringify({ error: 'Could not retrieve notes' }),
+              };
+            }
+          };
+      Runtime: nodejs16.x
+
+  UpdateNoteFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.updateNote
+      Role: !Ref RoleArn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const dynamo = new AWS.DynamoDB.DocumentClient();
+          const s3 = new AWS.S3();
+          const bucketName = process.env.LOGS_BUCKET;
+
+          const logOperation = async (operation, details) => {
+            const log = {
+              operation,
+              details,
+              timestamp: new Date().toISOString()
+            };
+
+            const params = {
+              Bucket: bucketName,
+              Key: `logs/${Date.now()}.json`,
+              Body: JSON.stringify(log),
+              ContentType: 'application/json'
+            };
+
+            await s3.putObject(params).promise();
+          };
+
+          exports.updateNote = async (event) => {
+            try {
+              const { id } = event.pathParameters;
+              const body = JSON.parse(event.body);
+              const { text } = body;
+
+              const params = {
+                TableName: 'NotesTable',
+                Key: { id },
+                UpdateExpression: 'set #text = :text',
+                ExpressionAttributeNames: {
+                  '#text': 'text',
+                },
+                ExpressionAttributeValues: {
+                  ':text': text,
+                },
+              };
+
+              await dynamo.update(params).promise();
+              await logOperation('update', { id, text });
+
+              return {
+                statusCode: 200,
+                headers: {
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                  'Access-Control-Allow-Headers': 'Content-Type,Authorization'
+                },
+                body: JSON.stringify({ id, text }),
+              };
+            } catch (error) {
+              console.error(error);
+              return {
+                statusCode: 500,
+                headers: {
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                  'Access-Control-Allow-Headers': 'Content-Type,Authorization'
+                },
+                body: JSON.stringify({ error: 'Could not update note' }),
+              };
+            }
+          };
+      Runtime: nodejs16.x
+      Environment:
+        Variables:
+          LOGS_BUCKET: !Ref NotesBucket
+
+  DeleteNoteFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.deleteNote
+      Role: !Ref RoleArn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const dynamo = new AWS.DynamoDB.DocumentClient();
+          const s3 = new AWS.S3();
+          const bucketName = process.env.LOGS_BUCKET;
+
+          const logOperation = async (operation, details) => {
+            const log = {
+              operation,
+              details,
+              timestamp: new Date().toISOString()
+            };
+
+            const params = {
+              Bucket: bucketName,
+              Key: `logs/${Date.now()}.json`,
+              Body: JSON.stringify(log),
+              ContentType: 'application/json'
+            };
+
+            await s3.putObject(params).promise();
+          };
+
+          exports.deleteNote = async (event) => {
+            try {
+              const { id } = event.pathParameters;
+
+              const params = {
+                TableName: 'NotesTable',
+                Key: { id },
+              };
+
+              await dynamo.delete(params).promise();
+              await logOperation('delete', { id });
+
+              return {
+                statusCode: 200,
+                headers: {
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                  'Access-Control-Allow-Headers': 'Content-Type,Authorization'
+                },
+              };
+            } catch (error) {
+              console.error(error);
+              return {
+                statusCode: 500,
+                headers: {
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                  'Access-Control-Allow-Headers': 'Content-Type,Authorization'
+                },
+                body: JSON.stringify({ error: 'Could not delete note' }),
+              };
+            }
+          };
+      Runtime: nodejs16.x
+      Environment:
+        Variables:
+          LOGS_BUCKET: !Ref NotesBucket
+
+  ApiGatewayRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: NoteTakingApi
+
+  ApiGatewayResourceNotes:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: notes
+      RestApiId: !Ref ApiGatewayRestApi
+
+  ApiGatewayResourceNotesWithID:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !Ref ApiGatewayResourceNotes
+      PathPart: '{id}'
+      RestApiId: !Ref ApiGatewayRestApi
+
+  ApiGatewayMethodCreateNote:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref ApiGatewayResourceNotes
+      RestApiId: !Ref ApiGatewayRestApi
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CreateNoteFunction.Arn}/invocations
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST,PUT,DELETE'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ApiGatewayMethodGetNotes:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: GET
+      ResourceId: !Ref ApiGatewayResourceNotes
+      RestApiId: !Ref ApiGatewayRestApi
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetNotesFunction.Arn}/invocations
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST,PUT,DELETE'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ApiGatewayMethodUpdateNote:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: PUT
+      ResourceId: !Ref ApiGatewayResourceNotesWithID
+      RestApiId: !Ref ApiGatewayRestApi
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UpdateNoteFunction.Arn}/invocations
+        RequestParameters:
+          integration.request.path.id: 'method.request.path.id'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST,PUT,DELETE'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ApiGatewayMethodDeleteNote:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: DELETE
+      ResourceId: !Ref ApiGatewayResourceNotesWithID
+      RestApiId: !Ref ApiGatewayRestApi
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DeleteNoteFunction.Arn}/invocations
+        RequestParameters:
+          integration.request.path.id: 'method.request.path.id'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST,PUT,DELETE'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      StageName: prod
+    DependsOn:
+      - ApiGatewayMethodCreateNote
+      - ApiGatewayMethodGetNotes
+      - ApiGatewayMethodUpdateNote
+      - ApiGatewayMethodDeleteNote
+      - ApiGatewayOptionsNotes
+
+  CreateNotePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CreateNoteFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/POST/notes
+
+  GetNotesPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref GetNotesFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/GET/notes
+
+  UpdateNotePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref UpdateNoteFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/PUT/notes/{id}
+
+  DeleteNotePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DeleteNoteFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/DELETE/notes/{id}
+
+  ApiGatewayOptionsNotes:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref ApiGatewayResourceNotes
+      RestApiId: !Ref ApiGatewayRestApi
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST,PUT,DELETE'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ApiGatewayOptionsNotesWithID:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref ApiGatewayResourceNotesWithID
+      RestApiId: !Ref ApiGatewayRestApi
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST,PUT,DELETE'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
