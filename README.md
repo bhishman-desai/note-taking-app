@@ -25,5 +25,13 @@ Before you begin, ensure you have the following installed:
 - [AWS](https://aws.amazon.com/)
 - [Node.js](https://nodejs.org/)
 
+## Deployed Link
+[Link](https://main--web-note-taker.netlify.app/).
+
+## Contributing
+Contributions to enhance the game's functionality or address any issues are welcome. Feel free to use the provided source code as a reference for creating similar applications for your institution.
+
+## License
+This project is licensed under the [MIT License](LICENSE).
 
 
