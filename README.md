@@ -1,4 +1,4 @@
-# AWS Lambda Note Taking API
+# AWS Lambda Note Taking APP
 
 This project provides a serverless note-taking API built with AWS Lambda, DynamoDB, and S3. It allows users to perform CRUD operations on notes while logging each operation to an S3 bucket.
 
